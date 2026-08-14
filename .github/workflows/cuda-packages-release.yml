@@ -90,7 +90,7 @@ jobs:
             -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_SERVER=ON
-          cmake --build build --config Release -j2
+          cmake --build build --config Release -j$(nproc)
 
       - name: Stage Installation Files
         run: |
