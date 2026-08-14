@@ -129,35 +129,12 @@ jobs:
 
           cp -r pkg_stage/* "$DEB_DIR/"
 
-          cat <<EOF > "$DEB_DIR/DEBIAN/control"
-Package: ${PKG_NAME}
-Version: ${VERSION}
-Section: utils
-Priority: optional
-Architecture: amd64
-Maintainer: KumarDev7 <https://github.com/KumarDev7>
-Depends: libc6 (>= 2.31), libssl3 | libssl1.1, libgomp1
-Description: Custom llama.cpp build with Ternary and low-bit CUDA support
- High-performance LLM inference engine supporting Ternary Bonsai 27B,
- custom group-128 quantization, flash attention, and OpenAI-compatible server.
-EOF
+          printf "Package: %s\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: KumarDev7\nDepends: libc6 (>= 2.31), libssl3 | libssl1.1, libgomp1\nDescription: Custom llama.cpp build with Ternary and low-bit CUDA support\n High-performance LLM inference engine supporting Ternary Bonsai 27B,\n custom group-128 quantization, flash attention, and OpenAI-compatible server.\n" "$PKG_NAME" "$VERSION" > "$DEB_DIR/DEBIAN/control"
 
-          cat <<EOF > "$DEB_DIR/DEBIAN/postinst"
-#!/bin/sh
-set -e
-if [ "\$1" = "configure" ]; then
-    ldconfig
-fi
-EOF
+          printf "#!/bin/sh\nset -e\nif [ \"\$1\" = \"configure\" ]; then\n    ldconfig\nfi\n" > "$DEB_DIR/DEBIAN/postinst"
           chmod 755 "$DEB_DIR/DEBIAN/postinst"
 
-          cat <<EOF > "$DEB_DIR/DEBIAN/postrm"
-#!/bin/sh
-set -e
-if [ "\$1" = "remove" ] || [ "\$1" = "purge" ]; then
-    ldconfig
-fi
-EOF
+          printf "#!/bin/sh\nset -e\nif [ \"\$1\" = \"remove\" ] || [ \"\$1\" = \"purge\" ]; then\n    ldconfig\nfi\n" > "$DEB_DIR/DEBIAN/postrm"
           chmod 755 "$DEB_DIR/DEBIAN/postrm"
 
           mkdir -p dist
@@ -194,37 +171,7 @@ EOF
           cat SHA256SUMS.txt
           cd ..
 
-          cat <<EOF > dist/RELEASE_NOTES.md
-          ## Custom llama.cpp with CUDA & Ternary Kernel Support (${{ steps.vars.outputs.tag }})
-
-          Automated release build of custom \`llama.cpp\` with CUDA enabled.
-
-          ### Features & Capabilities
-          - **Ternary Model Support**: Optimized CUDA kernels for \`Ternary-Bonsai-27B\` and group-128 quantization.
-          - **Multi-GPU Architecture**: Pre-compiled for sm_75 (T4), sm_80 (A100), sm_86 (RTX 30xx/A10G), and sm_89 (RTX 40xx/L4).
-          - **Included Binaries**:
-            - \`llama-server\`: OpenAI-compatible HTTP API inference server.
-            - \`llama-cli\`: High-speed interactive command-line interface.
-
-          ### Installation
-
-          #### Debian / Ubuntu (.deb)
-          \`\`\`bash
-          sudo dpkg -i llama-prism-cuda_${{ steps.vars.outputs.pkg_version }}_amd64.deb
-          \`\`\`
-
-          #### RHEL / CentOS / Fedora (.rpm)
-          \`\`\`bash
-          sudo rpm -ivh llama-prism-cuda-${{ steps.vars.outputs.pkg_version }}-1.x86_64.rpm
-          \`\`\`
-
-          #### Generic Tarball
-          \`\`\`bash
-          tar -xvf llama-prism-cuda_${{ steps.vars.outputs.pkg_version }}_linux-x86_64.tar.gz
-          sudo cp -r usr/* /usr/
-          sudo ldconfig
-          \`\`\`
-          EOF
+          printf "## Custom llama.cpp with CUDA & Ternary Kernel Support\n\nAutomated release build of custom llama.cpp with CUDA enabled.\n\n### Features\n- Ternary Model Support for Ternary-Bonsai-27B\n- Pre-compiled for sm_75 (T4), sm_80 (A100), sm_86 (RTX 30xx), sm_89 (RTX 40xx)\n- Includes llama-server and llama-cli binaries\n" > dist/RELEASE_NOTES.md
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
