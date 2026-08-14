@@ -83,8 +83,14 @@ jobs:
         run: |
           CUDA_ARCHS="${{ inputs.cuda_archs }}"
           CUDA_ARCHS="${CUDA_ARCHS:-75;80;86;89}"
-          cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}"
-          cmake --build build -j
+          cmake -B build \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=ON
+          cmake --build build --config Release -j2
 
       - name: Stage Installation Files
         run: |
