@@ -8,15 +8,18 @@ on:
     inputs:
       tag_name:
         description: 'Release Tag (e.g. v1.0.0-cuda)'
+        type: string
         required: false
         default: ''
       cuda_archs:
         description: 'CUDA Architectures (semicolon-separated sm codes, e.g. 75;80;86;89)'
+        type: string
         required: false
         default: '75;80;86;89'
       prerelease:
         description: 'Mark as pre-release'
         type: boolean
+        required: false
         default: false
 
 permissions:
@@ -57,8 +60,9 @@ jobs:
       - name: Determine Version Tag
         id: vars
         run: |
-          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
-            TAG="${{ github.event.inputs.tag_name }}"
+          INPUT_TAG="${{ inputs.tag_name }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
           elif [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
@@ -74,7 +78,8 @@ jobs:
 
       - name: Configure CMake
         run: |
-          CUDA_ARCHS="${{ github.event.inputs.cuda_archs || '75;80;86;89' }}"
+          CUDA_ARCHS="${{ inputs.cuda_archs }}"
+          CUDA_ARCHS="${CUDA_ARCHS:-75;80;86;89}"
           echo "Building for CUDA Architectures: ${CUDA_ARCHS}"
           
           cmake -S . -B build -G Ninja \
@@ -241,7 +246,7 @@ EOF
           name: "llama.cpp CUDA Release ${{ steps.vars.outputs.tag }}"
           body_path: dist/RELEASE_NOTES.md
           draft: false
-          prerelease: ${{ github.event.inputs.prerelease || false }}
+          prerelease: ${{ inputs.prerelease == true }}
           files: |
             dist/*.deb
             dist/*.rpm
