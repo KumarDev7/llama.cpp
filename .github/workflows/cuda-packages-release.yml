@@ -77,28 +77,10 @@ jobs:
           echo "pkg_version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Building version: ${TAG} (Package Version: ${PKG_VERSION})"
 
-      - name: Configure CMake
+      - name: Build llama.cpp with CUDA
         run: |
-          CUDA_ARCHS="${{ inputs.cuda_archs }}"
-          CUDA_ARCHS="${CUDA_ARCHS:-75;80;86;89}"
-          echo "Building for CUDA Architectures: ${CUDA_ARCHS}"
-          
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DGGML_CUDA=ON \
-            -DGGML_CUDA_CUB_3DOT2=ON \
-            -DGGML_NATIVE=OFF \
-            -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DLLAMA_BUILD_SERVER=ON \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DCMAKE_INSTALL_RPATH="\$ORIGIN/../lib/llama.cpp" \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
-
-      - name: Compile llama.cpp
-        run: |
-          cmake --build build --config Release -j$(nproc)
+          cmake -B build -DGGML_CUDA=ON
+          cmake --build build -j
 
       - name: Stage Installation Files
         run: |
