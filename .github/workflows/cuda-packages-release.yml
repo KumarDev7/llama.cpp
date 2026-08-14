@@ -81,7 +81,9 @@ jobs:
 
       - name: Build llama.cpp with CUDA
         run: |
-          cmake -B build -DGGML_CUDA=ON
+          CUDA_ARCHS="${{ inputs.cuda_archs }}"
+          CUDA_ARCHS="${CUDA_ARCHS:-75;80;86;89}"
+          cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}"
           cmake --build build -j
 
       - name: Stage Installation Files
