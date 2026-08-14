@@ -1,0 +1,251 @@
+name: Build CUDA Packages & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0-cuda)'
+        required: false
+        default: ''
+      cuda_archs:
+        description: 'CUDA Architectures (semicolon-separated sm codes, e.g. 75;80;86;89)'
+        required: false
+        default: '75;80;86;89'
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-package:
+    name: Build CUDA .deb & .rpm Packages
+    runs-on: ubuntu-24.04
+    container: nvidia/cuda:12.6.2-devel-ubuntu24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build tools and packaging dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            git \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            libgomp1 \
+            rpm \
+            alien \
+            tar \
+            gzip \
+            patchelf \
+            file
+
+      - name: Determine Version Tag
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          elif [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            DATE=$(date +'%Y%m%d')
+            TAG="v0.0.${DATE}-${SHORT_SHA}"
+          fi
+          # Clean version string for package naming (strip leading 'v')
+          PKG_VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "pkg_version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${TAG} (Package Version: ${PKG_VERSION})"
+
+      - name: Configure CMake
+        run: |
+          CUDA_ARCHS="${{ github.event.inputs.cuda_archs || '75;80;86;89' }}"
+          echo "Building for CUDA Architectures: ${CUDA_ARCHS}"
+          
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_CUDA=ON \
+            -DGGML_CUDA_CUB_3DOT2=ON \
+            -DGGML_NATIVE=OFF \
+            -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_INSTALL_RPATH="\$ORIGIN/../lib/llama.cpp" \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+
+      - name: Compile llama.cpp
+        run: |
+          cmake --build build --config Release -j$(nproc)
+
+      - name: Stage Installation Files
+        run: |
+          # Create staging root
+          STAGE_DIR="$(pwd)/pkg_stage"
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR/usr/bin"
+          mkdir -p "$STAGE_DIR/usr/lib/llama.cpp"
+          mkdir -p "$STAGE_DIR/etc/ld.so.conf.d"
+
+          # Copy binaries
+          cp build/bin/llama-server "$STAGE_DIR/usr/bin/"
+          cp build/bin/llama-cli "$STAGE_DIR/usr/bin/"
+          chmod 755 "$STAGE_DIR/usr/bin/"*
+
+          # Copy shared libraries
+          find build/bin -maxdepth 1 -name "*.so*" -exec cp -P {} "$STAGE_DIR/usr/lib/llama.cpp/" \;
+          chmod 755 "$STAGE_DIR/usr/lib/llama.cpp/"*.so*
+
+          # Add dynamic linker configuration so system finds libs
+          echo "/usr/lib/llama.cpp" > "$STAGE_DIR/etc/ld.so.conf.d/llama-cpp.conf"
+
+          # Verify binaries
+          echo "=== Staged Files ==="
+          find "$STAGE_DIR" -type f
+
+      - name: Build Debian (.deb) Package
+        run: |
+          VERSION="${{ steps.vars.outputs.pkg_version }}"
+          PKG_NAME="llama-prism-cuda"
+          DEB_DIR="deb_build/${PKG_NAME}_${VERSION}_amd64"
+          mkdir -p "$DEB_DIR/DEBIAN"
+
+          # Copy staged filesystem
+          cp -r pkg_stage/* "$DEB_DIR/"
+
+          # Debian control file
+          cat <<EOF > "$DEB_DIR/DEBIAN/control"
+Package: ${PKG_NAME}
+Version: ${VERSION}
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: KumarDev7 <https://github.com/KumarDev7>
+Depends: libc6 (>= 2.31), libssl3 | libssl1.1, libgomp1
+Description: Custom llama.cpp build with Ternary and low-bit CUDA support
+ High-performance LLM inference engine supporting Ternary Bonsai 27B,
+ custom group-128 quantization, flash attention, and OpenAI-compatible server.
+EOF
+
+          # Post-installation script to run ldconfig
+          cat <<EOF > "$DEB_DIR/DEBIAN/postinst"
+#!/bin/sh
+set -e
+if [ "\$1" = "configure" ]; then
+    ldconfig
+fi
+EOF
+          chmod 755 "$DEB_DIR/DEBIAN/postinst"
+
+          # Post-removal script to run ldconfig
+          cat <<EOF > "$DEB_DIR/DEBIAN/postrm"
+#!/bin/sh
+set -e
+if [ "\$1" = "remove" ] || [ "\$1" = "purge" ]; then
+    ldconfig
+fi
+EOF
+          chmod 755 "$DEB_DIR/DEBIAN/postrm"
+
+          # Build .deb
+          mkdir -p dist
+          dpkg-deb --build "$DEB_DIR" "dist/${PKG_NAME}_${VERSION}_amd64.deb"
+          echo "Debian package created: dist/${PKG_NAME}_${VERSION}_amd64.deb"
+
+      - name: Build RPM (.rpm) Package
+        run: |
+          VERSION="${{ steps.vars.outputs.pkg_version }}"
+          PKG_NAME="llama-prism-cuda"
+          DEB_FILE="dist/${PKG_NAME}_${VERSION}_amd64.deb"
+
+          # Convert .deb to .rpm using alien
+          cd dist
+          alien --to-rpm --scripts "${PKG_NAME}_${VERSION}_amd64.deb"
+          
+          # Standardize RPM file name
+          RPM_GENERATED=$(ls *.rpm 2>/dev/null | head -n 1)
+          if [ -n "$RPM_GENERATED" ]; then
+            mv "$RPM_GENERATED" "${PKG_NAME}-${VERSION}-1.x86_64.rpm"
+            echo "RPM package created: dist/${PKG_NAME}-${VERSION}-1.x86_64.rpm"
+          fi
+          cd ..
+
+      - name: Build Generic Tarball (.tar.gz)
+        run: |
+          VERSION="${{ steps.vars.outputs.pkg_version }}"
+          PKG_NAME="llama-prism-cuda"
+          
+          tar -czvf "dist/${PKG_NAME}_${VERSION}_linux-x86_64.tar.gz" -C pkg_stage usr etc
+          echo "Tarball created: dist/${PKG_NAME}_${VERSION}_linux-x86_64.tar.gz"
+
+      - name: Generate Checksums & Release Notes
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cd ..
+
+          cat <<EOF > dist/RELEASE_NOTES.md
+          ## Custom llama.cpp with CUDA & Ternary Kernel Support (${{ steps.vars.outputs.tag }})
+
+          Automated release build of custom \`llama.cpp\` with CUDA enabled.
+
+          ### Features & Capabilities
+          - **Ternary Model Support**: Optimized CUDA kernels for \`Ternary-Bonsai-27B\` and group-128 quantization.
+          - **Multi-GPU Architecture**: Pre-compiled for sm_75 (T4), sm_80 (A100), sm_86 (RTX 30xx/A10G), and sm_89 (RTX 40xx/L4).
+          - **Included Binaries**:
+            - \`llama-server\`: OpenAI-compatible HTTP API inference server.
+            - \`llama-cli\`: High-speed interactive command-line interface.
+
+          ### Installation
+
+          #### Debian / Ubuntu (.deb)
+          \`\`\`bash
+          sudo dpkg -i llama-prism-cuda_${{ steps.vars.outputs.pkg_version }}_amd64.deb
+          \`\`\`
+
+          #### RHEL / CentOS / Fedora (.rpm)
+          \`\`\`bash
+          sudo rpm -ivh llama-prism-cuda-${{ steps.vars.outputs.pkg_version }}-1.x86_64.rpm
+          \`\`\`
+
+          #### Generic Tarball
+          \`\`\`bash
+          tar -xvf llama-prism-cuda_${{ steps.vars.outputs.pkg_version }}_linux-x86_64.tar.gz
+          sudo cp -r usr/* /usr/
+          sudo ldconfig
+          \`\`\`
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: "llama.cpp CUDA Release ${{ steps.vars.outputs.tag }}"
+          body_path: dist/RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
