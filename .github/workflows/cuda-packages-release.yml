@@ -58,17 +58,19 @@ jobs:
             gzip \
             patchelf \
             file
+          git config --global --add safe.directory "*"
 
       - name: Determine Version Tag
         id: vars
         run: |
+          git config --global --add safe.directory "*"
           INPUT_TAG="${{ inputs.tag_name }}"
           if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
           elif [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            SHORT_SHA=$(git rev-parse --short HEAD)
+            SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "latest")
             DATE=$(date +'%Y%m%d')
             TAG="v0.0.${DATE}-${SHORT_SHA}"
           fi
